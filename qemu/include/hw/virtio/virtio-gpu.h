@@ -284,6 +284,7 @@ struct MemoryRegionInfo {
     int used;
     MemoryRegion mr;
     uint32_t resource_id;
+    MemoryRegion *owned_mr;
 };
 
 struct rutabaga;

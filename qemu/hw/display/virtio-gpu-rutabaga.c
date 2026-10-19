@@ -149,6 +149,26 @@ rutabaga_cmd_create_resource_3d(VirtIOGPU *g,
 
 static void tebox_dmabuf_drop(VirtIOGPU *g, uint32_t resource_id);
 
+/* A blob aperture can outlive its slot in a FlatView. Keep each mapped
+ * region's owner separate so resource reuse cannot leave a stale mapping
+ * pointing at a later gfxstream allocation. */
+static void tebox_retire_region(VirtIOGPURutabaga *vr, uint32_t slot)
+{
+    VirtIOGPUBase *vb = VIRTIO_GPU_BASE(vr);
+    struct MemoryRegionInfo *info = &vr->memory_regions[slot];
+    if (!info->used || !info->owned_mr) {
+        info->resource_id = 0;
+        info->used = 0;
+        return;
+    }
+    Object *owner = info->owned_mr->owner;
+    memory_region_del_subregion(&vb->hostmem, info->owned_mr);
+    info->owned_mr = NULL;
+    info->resource_id = 0;
+    info->used = 0;
+    object_unref(owner);
+}
+
 static void
 virtio_gpu_rutabaga_resource_unref(VirtIOGPU *g,
                                    struct virtio_gpu_simple_resource *res,
@@ -159,6 +179,13 @@ virtio_gpu_rutabaga_resource_unref(VirtIOGPU *g,
 
     virtio_gpu_disable_scanout_for_resource(g, res->resource_id);
     tebox_dmabuf_drop(g, res->resource_id);
+
+    for (uint32_t slot = 0; slot < MAX_SLOTS; slot++) {
+        if (vr->memory_regions[slot].used &&
+            vr->memory_regions[slot].resource_id == res->resource_id) {
+            tebox_retire_region(vr, slot);
+        }
+    }
 
     result = rutabaga_resource_unref(vr->rutabaga, res->resource_id);
     if (result) {
@@ -874,10 +901,13 @@ rutabaga_cmd_resource_map_blob(VirtIOGPU *g,
             continue;
         }
 
-        MemoryRegion *mr = &(vr->memory_regions[slot].mr);
-        memory_region_init_ram_ptr(mr, OBJECT(vr), "blob", mapping.size,
+        MemoryRegion *mr = g_new0(MemoryRegion, 1);
+        Object *owner = object_new(TYPE_CONTAINER);
+        memory_region_init_ram_ptr(mr, owner, "blob", mapping.size,
                                    mapping.ptr);
+        OBJECT(mr)->free = g_free;
         memory_region_add_subregion(&vb->hostmem, mblob.offset, mr);
+        vr->memory_regions[slot].owned_mr = mr;
         vr->memory_regions[slot].resource_id = mblob.resource_id;
         vr->memory_regions[slot].used = 1;
         break;
@@ -918,11 +948,7 @@ rutabaga_cmd_resource_unmap_blob(VirtIOGPU *g,
             continue;
         }
 
-        MemoryRegion *mr = &(vr->memory_regions[slot].mr);
-        memory_region_del_subregion(&vb->hostmem, mr);
-
-        vr->memory_regions[slot].resource_id = 0;
-        vr->memory_regions[slot].used = 0;
+        tebox_retire_region(vr, slot);
         break;
     }
 
@@ -1169,6 +1195,10 @@ static bool virtio_gpu_rutabaga_init(VirtIOGPU *g, Error **errp)
     builder.debug_cb = virtio_gpu_rutabaga_debug_cb;
     builder.capset_mask = vr->capset_mask;
     builder.user_data = (uint64_t)g;
+    /* Forward optional gfxstream feature overrides to rutabaga. This keeps
+     * the mainline default unchanged while allowing a ROM/host combination
+     * with unstable Vulkan transitions to opt into robustness features. */
+    builder.renderer_features = g_getenv("GFXSTREAM_RENDERER_FEATURES");
 
     /*
      * If the user doesn't specify the wayland socket path, we try to infer

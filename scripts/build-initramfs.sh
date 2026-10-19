@@ -208,6 +208,14 @@ if grep -q 'androidboot.qemu_adb=1' /proc/cmdline 2>/dev/null && \
     echo "[init] adb auth off (ro.adb.secure=0)"
 fi
 
+if [ "$VARIANT" = "Hyperos-OS3.0.50.2.W-AB-20260122" ]; then
+  # HyperOS MIUI init waits for a physical opconfig block path that QEMU lacks.
+  # Provide a writable tmpfs and an existence-only placeholder before switch_root.
+  mkdir -p /newroot/opconfig /newroot/dev/block/bootdevice/by-name
+  mount -t tmpfs -o mode=0775 tmpfs /newroot/opconfig
+  ln -sf /dev/null /newroot/dev/block/bootdevice/by-name/opconfig
+fi
+
 mkdir -p /newroot/proc /newroot/sys /newroot/dev
 mount -o bind /proc /newroot/proc
 mount -o bind /sys /newroot/sys

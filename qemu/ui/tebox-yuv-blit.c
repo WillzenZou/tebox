@@ -171,6 +171,10 @@ bool tebox_yuv_blit(const struct tebox_yuv_picture *src, int dst_fd, uint32_t ds
                                blit.ctx)) {
         goto restore;
     }
+    if (!blit.src_tex || !blit.dst_tex) {
+        glGenTextures(1, &blit.src_tex);
+        glGenTextures(1, &blit.dst_tex);
+    }
     src_img = import_yuv(src);
     dst_img = import_rgba(dst_fd, dst_offset, dst_pitch, dst_w, dst_h);
     if (src_img == EGL_NO_IMAGE_KHR || dst_img == EGL_NO_IMAGE_KHR) {
@@ -210,6 +214,18 @@ bool tebox_yuv_blit(const struct tebox_yuv_picture *src, int dst_fd, uint32_t ds
 out:
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    /* Drop the texture objects before destroying their imported images. The
+     * Mali EGL implementation can retain the texture-to-image mapping until
+     * the texture is deleted; destroying the image first leaves a stale GPU
+     * mapping alive across frames and eventually triggers a tile/page fault. */
+    if (blit.src_tex) {
+        glDeleteTextures(1, &blit.src_tex);
+        blit.src_tex = 0;
+    }
+    if (blit.dst_tex) {
+        glDeleteTextures(1, &blit.dst_tex);
+        blit.dst_tex = 0;
+    }
     if (src_img != EGL_NO_IMAGE_KHR) {
         eglDestroyImageKHR(qemu_egl_display, src_img);
     }

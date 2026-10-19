@@ -361,11 +361,18 @@ static bool setup_capture(struct vdec_session *v)
     free_capture(v);
     if (xioctl(v->fd, VIDIOC_G_FMT, &fmt)) return false;
     native = fmt.fmt.pix_mp.pixelformat;
-    /* 10-bit streams report P010-type pictures (M010); keep the depth and let
-     * the GPU sample it. Everything else decodes to NV12. */
-    fmt.fmt.pix_mp.pixelformat = native == v4l2_fourcc('M', '0', '1', '0') ||
-                                         native == V4L2_PIX_FMT_P010
-                                 ? V4L2_PIX_FMT_P010 : V4L2_PIX_FMT_NV12;
+    /* HyperOS's wallpaper stream is 10-bit HEVC, but the host Mali/GLES
+     * import path is not stable for P010 dma-bufs. Its runtime sets this
+     * opt-in for the HyperOS variant; other ROMs retain the mainline format
+     * selection. */
+    const char *force_nv12 = getenv("TEBOX_VDEC_FORCE_NV12");
+    if (force_nv12 && strcmp(force_nv12, "1") == 0) {
+        fmt.fmt.pix_mp.pixelformat = V4L2_PIX_FMT_NV12;
+    } else {
+        fmt.fmt.pix_mp.pixelformat = native == v4l2_fourcc('M', '0', '1', '0') ||
+                                             native == V4L2_PIX_FMT_P010
+                                     ? V4L2_PIX_FMT_P010 : V4L2_PIX_FMT_NV12;
+    }
     /* Mali imports dma-bufs only with aligned rows (a 1080-byte NV12 luma
      * pitch is refused): ask for 64-byte aligned pitches. */
     {

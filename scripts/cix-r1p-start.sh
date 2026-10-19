@@ -20,6 +20,12 @@ done
 source "$TEBOX/scripts/cix-mali-env.sh"
 export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:$CIX_GPU_COMPAT/lib/aarch64-linux-gnu:$TEBOX/lib"
 export ADB_BIND="${ADB_BIND:-0.0.0.0}"
+# HyperOS live wallpaper produces P010 frames that the CIX Mali import path
+# cannot safely sample. Keep the workaround scoped to this ROM variant.
+if [[ "${VARIANT:?}" == "Hyperos-OS3.0.50.2.W-AB-20260122" ]]; then
+  export TEBOX_VDEC_FORCE_NV12=1
+  export GFXSTREAM_RENDERER_FEATURES="${GFXSTREAM_RENDERER_FEATURES:-VulkanVirtualQueue:enabled,VulkanRobustness:enabled}"
+fi
 # Mali GBM already pads linear pitches; the padded-RGB row-alignment hint
 # (androidboot.tebox.rgb_row_alignment) skews CPU-written buffers here.
 export QEMU_EXTRA_APPEND="androidboot.tebox.video_encode=1${QEMU_EXTRA_APPEND:+ $QEMU_EXTRA_APPEND}"
